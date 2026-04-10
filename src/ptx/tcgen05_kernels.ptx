@@ -1,0 +1,535 @@
+.version 8.4
+.target sm_100
+.address_size 64
+
+.entry efla_linear_attention_fp4 {
+    .param .u64 Q_ptr,
+    .param .u64 K_ptr,
+    .param .u64 V_ptr,
+    .param .u64 O_ptr,
+    .param .u64 seq_len,
+    .param .u64 head_dim,
+    .param .u64 num_heads
+}
+{
+    .reg .pred p<8>;
+    .reg .b32 r<32>;
+    .reg .b64 rd<16>;
+    .reg .f32 f<64>;
+    .reg .b32 q_val<4>, k_val<4>, v_val<4>;
+    
+    ld.param.u64 rd0, [Q_ptr];
+    ld.param.u64 rd1, [K_ptr];
+    ld.param.u64 rd2, [V_ptr];
+    ld.param.u64 rd3, [O_ptr];
+    ld.param.u64 rd4, [seq_len];
+    ld.param.u64 rd5, [head_dim];
+    ld.param.u64 rd6, [num_heads];
+    
+    mov.u32 r0, %ctaid.x;
+    mov.u32 r1, %tid.x;
+    mad.lo.u32 r2, r0, 256, r1;
+    
+    cvt.u64.u32 rd7, r2;
+    
+    setp.ge.u64 p0, rd7, rd4;
+    @p0 bra EXIT;
+    
+    mov.u32 r3, 0;
+    mov.f32 f0, 0.0;
+    
+    ld.global.nc.v4.b32 {q_val0, q_val1, q_val2, q_val3}, [rd0];
+    
+LOOP_K:
+    setp.ge.u32 p1, r3, rd4;
+    @p1 bra END_LOOP;
+    
+    cvt.u64.u32 rd8, r3;
+    mul.lo.u64 rd9, rd8, rd5;
+    mul.lo.u64 rd10, rd9, 4;
+    add.u64 rd11, rd1, rd10;
+    
+    ld.global.nc.v4.b32 {k_val0, k_val1, k_val2, k_val3}, [rd11];
+    
+    mul.lo.u64 rd12, rd8, rd5;
+    mul.lo.u64 rd13, rd12, 4;
+    add.u64 rd14, rd2, rd13;
+    
+    ld.global.nc.v4.b32 {v_val0, v_val1, v_val2, v_val3}, [rd14];
+    
+    mov.b32 f1, k_val0;
+    mov.b32 f2, v_val0;
+    fma.rn.f32 f0, f1, f2, f0;
+    
+    add.u32 r3, r3, 1;
+    bra LOOP_K;
+    
+END_LOOP:
+    mul.lo.u64 rd15, rd7, rd5;
+    mul.lo.u64 rd15, rd15, 4;
+    add.u64 rd15, rd3, rd15;
+    
+    st.global.v4.b32 [rd15], {q_val0, q_val1, q_val2, q_val3};
+    
+EXIT:
+    ret;
+}
+
+.entry muon_orthogonal_update_fp8 {
+    .param .u64 grad_ptr,
+    .param .u64 momentum_ptr,
+    .param .u64 weight_ptr,
+    .param .u64 rows,
+    .param .u64 cols,
+    .param .f32 lr,
+    .param .f32 momentum_coef
+}
+{
+    .reg .pred p<4>;
+    .reg .b32 r<16>;
+    .reg .b64 rd<12>;
+    .reg .f32 f<32>;
+    
+    ld.param.u64 rd0, [grad_ptr];
+    ld.param.u64 rd1, [momentum_ptr];
+    ld.param.u64 rd2, [weight_ptr];
+    ld.param.u64 rd3, [rows];
+    ld.param.u64 rd4, [cols];
+    ld.param.f32 f0, [lr];
+    ld.param.f32 f1, [momentum_coef];
+    
+    mov.u32 r0, %ctaid.x;
+    mov.u32 r1, %tid.x;
+    mad.lo.u32 r2, r0, 256, r1;
+    
+    cvt.u64.u32 rd5, r2;
+    mul.lo.u64 rd6, rd5, rd4;
+    mul.lo.u64 rd6, rd6, 4;
+    
+    add.u64 rd7, rd0, rd6;
+    add.u64 rd8, rd1, rd6;
+    add.u64 rd9, rd2, rd6;
+    
+    ld.global.f32 f2, [rd7];
+    ld.global.f32 f3, [rd8];
+    
+    fma.rn.f32 f4, f1, f3, f2;
+    
+    st.global.f32 [rd8], f4;
+    
+    ld.global.f32 f5, [rd9];
+    fma.rn.f32 f6, f0, f4, f5;
+    st.global.f32 [rd9], f6;
+    
+    ret;
+}
+
+.entry lion_sign_update_fp4 {
+    .param .u64 grad_ptr,
+    .param .u64 momentum_ptr,
+    .param .u64 weight_ptr,
+    .param .u64 size,
+    .param .f32 lr,
+    .param .f32 beta1,
+    .param .f32 beta2
+}
+{
+    .reg .pred p<4>;
+    .reg .b32 r<16>;
+    .reg .b64 rd<10>;
+    .reg .f32 f<16>;
+    
+    ld.param.u64 rd0, [grad_ptr];
+    ld.param.u64 rd1, [momentum_ptr];
+    ld.param.u64 rd2, [weight_ptr];
+    ld.param.u64 rd3, [size];
+    ld.param.f32 f0, [lr];
+    ld.param.f32 f1, [beta1];
+    ld.param.f32 f2, [beta2];
+    
+    mov.u32 r0, %ctaid.x;
+    mov.u32 r1, %tid.x;
+    mad.lo.u32 r2, r0, 256, r1;
+    
+    cvt.u64.u32 rd4, r2;
+    mul.lo.u64 rd5, rd4, 4;
+    
+    setp.ge.u64 p0, rd4, rd3;
+    @p0 bra EXIT;
+    
+    add.u64 rd6, rd0, rd5;
+    add.u64 rd7, rd1, rd5;
+    add.u64 rd8, rd2, rd5;
+    
+    ld.global.f32 f3, [rd6];
+    ld.global.f32 f4, [rd7];
+    ld.global.f32 f5, [rd8];
+    
+    fma.rn.f32 f6, f1, f4, f3;
+    st.global.f32 [rd7], f6;
+    
+    sign.approx.f32 f7, f6;
+    
+    fma.rn.f32 f8, f0, f7, f5;
+    st.global.f32 [rd8], f8;
+    
+    fma.rn.f32 f9, f2, f4, f3;
+    st.global.f32 [rd7], f9;
+    
+EXIT:
+    ret;
+}
+
+.entry quantize_mxfp8 {
+    .param .u64 input_ptr,
+    .param .u64 output_ptr,
+    .param .u64 scale_ptr,
+    .param .u64 size
+}
+{
+    .reg .pred p<4>;
+    .reg .b32 r<16>;
+    .reg .b64 rd<10>;
+    .reg .f32 f<16>;
+    .reg .b32 q_val;
+    
+    ld.param.u64 rd0, [input_ptr];
+    ld.param.u64 rd1, [output_ptr];
+    ld.param.u64 rd2, [scale_ptr];
+    ld.param.u64 rd3, [size];
+    
+    mov.u32 r0, %ctaid.x;
+    mov.u32 r1, %tid.x;
+    mad.lo.u32 r2, r0, 256, r1;
+    
+    cvt.u64.u32 rd4, r2;
+    mul.lo.u64 rd5, rd4, 4;
+    
+    setp.ge.u64 p0, rd4, rd3;
+    @p0 bra EXIT;
+    
+    add.u64 rd6, rd0, rd5;
+    add.u64 rd7, rd1, rd4;
+    
+    ld.global.f32 f0, [rd6];
+    
+    ld.global.f32 f1, [rd2];
+    
+    div.rn.f32 f2, f0, f1;
+    
+    cvt.rni.sat.s8.f32 q_val, f2;
+    
+    st.global.u8 [rd7], q_val;
+    
+EXIT:
+    ret;
+}
+
+.entry nccl_allreduce_sum_fp8 {
+    .param .u64 sendbuf,
+    .param .u64 recvbuf,
+    .param .u64 count,
+    .param .u32 rank,
+    .param .u32 world_size
+}
+{
+    .reg .pred p<4>;
+    .reg .b32 r<16>;
+    .reg .b64 rd<10>;
+    .reg .f32 f<8>;
+    
+    ld.param.u64 rd0, [sendbuf];
+    ld.param.u64 rd1, [recvbuf];
+    ld.param.u64 rd2, [count];
+    ld.param.u32 r0, [rank];
+    ld.param.u32 r1, [world_size];
+    
+    mov.u32 r2, %ctaid.x;
+    mov.u32 r3, %tid.x;
+    mad.lo.u32 r4, r2, 256, r3;
+    
+    cvt.u64.u32 rd3, r4;
+    mul.lo.u64 rd4, rd3, 4;
+    
+    setp.ge.u64 p0, rd3, rd2;
+    @p0 bra EXIT;
+    
+    add.u64 rd5, rd0, rd4;
+    add.u64 rd6, rd1, rd4;
+    
+    ld.global.f32 f0, [rd5];
+    
+    mov.f32 f1, 0.0;
+    
+    mov.u32 r5, 0;
+REDUCE_LOOP:
+    setp.ge.u32 p1, r5, r1;
+    @p1 bra END_REDUCE;
+    
+    mul.u32 r6, r5, r2;
+    add.u32 r7, r6, r4;
+    cvt.u64.u32 rd7, r7;
+    mul.lo.u64 rd8, rd7, 4;
+    add.u64 rd9, rd0, rd8;
+    
+    ld.global.f32 f2, [rd9];
+    add.f32 f1, f1, f2;
+    
+    add.u32 r5, r5, 1;
+    bra REDUCE_LOOP;
+    
+END_REDUCE:
+    st.global.f32 [rd6], f1;
+    
+EXIT:
+    ret;
+}
+
+.entry tensor_parallel_matmul_fp4 {
+    .param .u64 A_ptr,
+    .param .u64 B_ptr,
+    .param .u64 C_ptr,
+    .param .u64 M,
+    .param .u64 N,
+    .param .u64 K,
+    .param .u32 local_rank,
+    .param .u32 world_size
+}
+{
+    .reg .pred p<8>;
+    .reg .b32 r<32>;
+    .reg .b64 rd<20>;
+    .reg .f32 f<64>;
+    
+    ld.param.u64 rd0, [A_ptr];
+    ld.param.u64 rd1, [B_ptr];
+    ld.param.u64 rd2, [C_ptr];
+    ld.param.u64 rd3, [M];
+    ld.param.u64 rd4, [N];
+    ld.param.u64 rd5, [K];
+    ld.param.u32 r0, [local_rank];
+    ld.param.u32 r1, [world_size];
+    
+    mov.u32 r2, %ctaid.x;
+    mov.u32 r3, %ctaid.y;
+    mov.u32 r4, %tid.x;
+    mov.u32 r5, %tid.y;
+    
+    mad.lo.u32 r6, r2, 16, r4;
+    mad.lo.u32 r7, r3, 16, r5;
+    
+    cvt.u64.u32 rd6, r6;
+    cvt.u64.u32 rd7, r7;
+    
+    div.u64 rd8, rd4, r1;
+    mul.u64 rd9, rd8, r0;
+    add.u64 rd10, rd7, rd9;
+    
+    setp.ge.u64 p0, rd6, rd3;
+    setp.ge.u64 p1, rd10, rd4;
+    or.pred p2, p0, p1;
+    @p2 bra EXIT;
+    
+    mov.f32 f0, 0.0;
+    
+    mov.u32 r8, 0;
+MATMUL_LOOP:
+    setp.ge.u32 p3, r8, rd5;
+    @p3 bra END_MATMUL;
+    
+    cvt.u64.u32 rd11, r8;
+    
+    mul.lo.u64 rd12, rd6, rd5;
+    add.u64 rd13, rd12, rd11;
+    mul.lo.u64 rd13, rd13, 4;
+    add.u64 rd14, rd0, rd13;
+    
+    mul.lo.u64 rd15, rd11, rd4;
+    add.u64 rd16, rd15, rd10;
+    mul.lo.u64 rd16, rd16, 4;
+    add.u64 rd17, rd1, rd16;
+    
+    ld.global.f32 f1, [rd14];
+    ld.global.f32 f2, [rd17];
+    
+    fma.rn.f32 f0, f1, f2, f0;
+    
+    add.u32 r8, r8, 1;
+    bra MATMUL_LOOP;
+    
+END_MATMUL:
+    mul.lo.u64 rd18, rd6, rd4;
+    add.u64 rd19, rd18, rd10;
+    mul.lo.u64 rd19, rd19, 4;
+    add.u64 rd19, rd2, rd19;
+    
+    st.global.f32 [rd19], f0;
+    
+EXIT:
+    ret;
+}
+
+.entry sequence_parallel_scan_fp8 {
+    .param .u64 input_ptr,
+    .param .u64 output_ptr,
+    .param .u64 seq_len,
+    .param .u64 hidden_dim,
+    .param .u32 local_rank,
+    .param .u32 world_size
+}
+{
+    .reg .pred p<8>;
+    .reg .b32 r<32>;
+    .reg .b64 rd<16>;
+    .reg .f32 f<32>;
+    
+    ld.param.u64 rd0, [input_ptr];
+    ld.param.u64 rd1, [output_ptr];
+    ld.param.u64 rd2, [seq_len];
+    ld.param.u64 rd3, [hidden_dim];
+    ld.param.u32 r0, [local_rank];
+    ld.param.u32 r1, [world_size];
+    
+    div.u64 rd4, rd2, r1;
+    mul.u64 rd5, rd4, r0;
+    
+    mov.u32 r2, %ctaid.x;
+    mov.u32 r3, %tid.x;
+    mad.lo.u32 r4, r2, 256, r3;
+    
+    cvt.u64.u32 rd6, r4;
+    
+    setp.ge.u64 p0, rd6, rd3;
+    @p0 bra EXIT;
+    
+    mov.f32 f0, 0.0;
+    
+    mov.u64 rd7, 0;
+SCAN_LOOP:
+    setp.ge.u64 p1, rd7, rd4;
+    @p1 bra END_SCAN;
+    
+    add.u64 rd8, rd5, rd7;
+    mul.lo.u64 rd9, rd8, rd3;
+    add.u64 rd10, rd9, rd6;
+    mul.lo.u64 rd10, rd10, 4;
+    add.u64 rd11, rd0, rd10;
+    
+    ld.global.f32 f1, [rd11];
+    
+    add.f32 f0, f0, f1;
+    
+    mul.lo.u64 rd12, rd8, rd3;
+    add.u64 rd13, rd12, rd6;
+    mul.lo.u64 rd13, rd13, 4;
+    add.u64 rd14, rd1, rd13;
+    
+    st.global.f32 [rd14], f0;
+    
+    add.u64 rd7, rd7, 1;
+    bra SCAN_LOOP;
+    
+END_SCAN:
+EXIT:
+    ret;
+}
+
+.entry zero_offload_async {
+    .param .u64 gpu_ptr,
+    .param .u64 cpu_ptr,
+    .param .u64 size,
+    .param .u32 direction
+}
+{
+    .reg .pred p<4>;
+    .reg .b32 r<16>;
+    .reg .b64 rd<10>;
+    .reg .f32 f<4>;
+    
+    ld.param.u64 rd0, [gpu_ptr];
+    ld.param.u64 rd1, [cpu_ptr];
+    ld.param.u64 rd2, [size];
+    ld.param.u32 r0, [direction];
+    
+    mov.u32 r1, %ctaid.x;
+    mov.u32 r2, %tid.x;
+    mad.lo.u32 r3, r1, 256, r2;
+    
+    cvt.u64.u32 rd3, r3;
+    mul.lo.u64 rd4, rd3, 4;
+    
+    setp.ge.u64 p0, rd3, rd2;
+    @p0 bra EXIT;
+    
+    add.u64 rd5, rd0, rd4;
+    add.u64 rd6, rd1, rd4;
+    
+    setp.eq.u32 p1, r0, 0;
+    @p1 bra GPU_TO_CPU;
+    
+    ld.global.f32 f0, [rd6];
+    st.global.f32 [rd5], f0;
+    bra EXIT;
+    
+GPU_TO_CPU:
+    ld.global.f32 f0, [rd5];
+    st.global.f32 [rd6], f0;
+    
+EXIT:
+    ret;
+}
+
+.entry stable_qat_forward_backward {
+    .param .u64 weight_ptr,
+    .param .u64 grad_output_ptr,
+    .param .u64 grad_input_ptr,
+    .param .u64 size,
+    .param .u32 bits,
+    .param .f32 scale
+}
+{
+    .reg .pred p<4>;
+    .reg .b32 r<16>;
+    .reg .b64 rd<12>;
+    .reg .f32 f<16>;
+    .reg .b32 q_val;
+    
+    ld.param.u64 rd0, [weight_ptr];
+    ld.param.u64 rd1, [grad_output_ptr];
+    ld.param.u64 rd2, [grad_input_ptr];
+    ld.param.u64 rd3, [size];
+    ld.param.u32 r0, [bits];
+    ld.param.f32 f0, [scale];
+    
+    mov.u32 r1, %ctaid.x;
+    mov.u32 r2, %tid.x;
+    mad.lo.u32 r3, r1, 256, r2;
+    
+    cvt.u64.u32 rd4, r3;
+    mul.lo.u64 rd5, rd4, 4;
+    
+    setp.ge.u64 p0, rd4, rd3;
+    @p0 bra EXIT;
+    
+    add.u64 rd6, rd0, rd5;
+    add.u64 rd7, rd1, rd5;
+    add.u64 rd8, rd2, rd5;
+    
+    ld.global.f32 f1, [rd6];
+    ld.global.f32 f2, [rd7];
+    
+    div.rn.f32 f3, f1, f0;
+    cvt.rni.sat.s8.f32 q_val, f3;
+    cvt.rn.f32.s32 f4, q_val;
+    mul.rn.f32 f5, f4, f0;
+    
+    sub.f32 f6, f1, f5;
+    abs.f32 f7, f6;
+    setp.lt.f32 p1, f7, 0.001;
+    
+    @p1 st.global.f32 [rd8], f2;
+    @!p1 st.global.f32 [rd8], 0.0;
+    
+EXIT:
+    ret;
+}

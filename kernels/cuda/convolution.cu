@@ -1,0 +1,189 @@
+#include "titan_kernels.h"
+#include <cuda_runtime.h>
+
+__global__ void short_conv_forward_kernel(
+    const float* __restrict__ input,
+    const float* __restrict__ weights,
+    const float* __restrict__ bias,
+    float* __restrict__ output,
+    int seq_len, int channels, int window_size
+) {
+    int batch_idx = blockIdx.z;
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    int c = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (t >= seq_len || c >= channels) {
+        return;
+    }
+
+    float sum = bias ? bias[c] : 0.0f;
+    for (int j = 0; j < window_size; ++j) {
+        int src_t = t - j;
+        if (src_t >= 0) {
+            int input_idx = (batch_idx * seq_len + src_t) * channels + c;
+            sum += input[input_idx] * weights[c * window_size + j];
+        }
+    }
+
+    int output_idx = (batch_idx * seq_len + t) * channels + c;
+    output[output_idx] = sum;
+}
+
+__global__ void short_conv_backward_kernel(
+    const float* __restrict__ grad_output,
+    const float* __restrict__ input,
+    const float* __restrict__ weights,
+    float* __restrict__ grad_input,
+    float* __restrict__ grad_weights,
+    float* __restrict__ grad_bias,
+    int seq_len, int channels, int window_size
+) {
+    int batch_idx = blockIdx.z;
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    int c = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (t >= seq_len || c >= channels) {
+        return;
+    }
+
+    int go_idx = (batch_idx * seq_len + t) * channels + c;
+    float go_val = grad_output[go_idx];
+
+    if (grad_bias != nullptr) {
+        atomicAdd(&grad_bias[c], go_val);
+    }
+
+    for (int j = 0; j < window_size; ++j) {
+        int src_t = t - j;
+        if (src_t >= 0) {
+            int input_idx = (batch_idx * seq_len + src_t) * channels + c;
+            atomicAdd(&grad_input[input_idx], go_val * weights[c * window_size + j]);
+            atomicAdd(&grad_weights[c * window_size + j], go_val * input[input_idx]);
+        }
+    }
+}
+
+extern "C" titan_status_t titan_short_conv_forward(
+    const float* input, const float* weights, float* output,
+    int batch_size, int seq_len, int channels, int window_size,
+    titan_stream_t stream
+) {
+    if (!input || !weights || !output || batch_size <= 0 || seq_len <= 0 || channels <= 0 || window_size <= 0) {
+        return TITAN_ERROR_INVALID_ARGUMENT;
+    }
+
+    dim3 block(16, 16);
+    dim3 grid(
+        static_cast<unsigned int>((seq_len + block.x - 1) / block.x),
+        static_cast<unsigned int>((channels + block.y - 1) / block.y),
+        static_cast<unsigned int>(batch_size)
+    );
+
+    short_conv_forward_kernel<<<grid, block, 0, (cudaStream_t)stream>>>(
+        input, weights, nullptr, output, seq_len, channels, window_size
+    );
+
+    return (cudaGetLastError() == cudaSuccess) ? TITAN_SUCCESS : TITAN_ERROR_KERNEL_LAUNCH;
+}
+
+extern "C" titan_status_t titan_short_conv_backward(
+    const float* grad_output, const float* input, const float* weights,
+    float* grad_input, float* grad_weights,
+    int batch_size, int seq_len, int channels, int window_size,
+    titan_stream_t stream
+) {
+    if (!grad_output || !input || !weights || !grad_input || !grad_weights ||
+        batch_size <= 0 || seq_len <= 0 || channels <= 0 || window_size <= 0) {
+        return TITAN_ERROR_INVALID_ARGUMENT;
+    }
+
+    cudaStream_t cuda_stream = (cudaStream_t)stream;
+    cudaError_t err = cudaMemsetAsync(grad_input, 0, static_cast<size_t>(batch_size) * static_cast<size_t>(seq_len) * static_cast<size_t>(channels) * sizeof(float), cuda_stream);
+    if (err != cudaSuccess) {
+        return TITAN_ERROR_CUDA;
+    }
+    err = cudaMemsetAsync(grad_weights, 0, static_cast<size_t>(channels) * static_cast<size_t>(window_size) * sizeof(float), cuda_stream);
+    if (err != cudaSuccess) {
+        return TITAN_ERROR_CUDA;
+    }
+
+    dim3 block(16, 16);
+    dim3 grid(
+        static_cast<unsigned int>((seq_len + block.x - 1) / block.x),
+        static_cast<unsigned int>((channels + block.y - 1) / block.y),
+        static_cast<unsigned int>(batch_size)
+    );
+
+    short_conv_backward_kernel<<<grid, block, 0, cuda_stream>>>(
+        grad_output, input, weights, grad_input, grad_weights, nullptr,
+        seq_len, channels, window_size
+    );
+
+    return (cudaGetLastError() == cudaSuccess) ? TITAN_SUCCESS : TITAN_ERROR_KERNEL_LAUNCH;
+}
+
+
+extern "C" titan_status_t titan_short_conv_forward_bias(
+    const float* input, const float* weights, const float* bias, float* output,
+    int batch_size, int seq_len, int channels, int window_size,
+    titan_stream_t stream
+) {
+    if (!input || !weights || !output || batch_size <= 0 || seq_len <= 0 || channels <= 0 || window_size <= 0) {
+        return TITAN_ERROR_INVALID_ARGUMENT;
+    }
+
+    dim3 block(16, 16);
+    dim3 grid(
+        static_cast<unsigned int>((seq_len + block.x - 1) / block.x),
+        static_cast<unsigned int>((channels + block.y - 1) / block.y),
+        static_cast<unsigned int>(batch_size)
+    );
+
+    short_conv_forward_kernel<<<grid, block, 0, (cudaStream_t)stream>>>(
+        input, weights, bias, output, seq_len, channels, window_size
+    );
+
+    return (cudaGetLastError() == cudaSuccess) ? TITAN_SUCCESS : TITAN_ERROR_KERNEL_LAUNCH;
+}
+
+extern "C" titan_status_t titan_short_conv_backward_bias(
+    const float* grad_output, const float* input, const float* weights,
+    float* grad_input, float* grad_weights, float* grad_bias,
+    int batch_size, int seq_len, int channels, int window_size,
+    titan_stream_t stream
+) {
+    if (!grad_output || !input || !weights || !grad_input || !grad_weights ||
+        batch_size <= 0 || seq_len <= 0 || channels <= 0 || window_size <= 0) {
+        return TITAN_ERROR_INVALID_ARGUMENT;
+    }
+
+    cudaStream_t cuda_stream = (cudaStream_t)stream;
+    cudaError_t err = cudaMemsetAsync(grad_input, 0, static_cast<size_t>(batch_size) * static_cast<size_t>(seq_len) * static_cast<size_t>(channels) * sizeof(float), cuda_stream);
+    if (err != cudaSuccess) {
+        return TITAN_ERROR_CUDA;
+    }
+    err = cudaMemsetAsync(grad_weights, 0, static_cast<size_t>(channels) * static_cast<size_t>(window_size) * sizeof(float), cuda_stream);
+    if (err != cudaSuccess) {
+        return TITAN_ERROR_CUDA;
+    }
+    if (grad_bias != nullptr) {
+        err = cudaMemsetAsync(grad_bias, 0, static_cast<size_t>(channels) * sizeof(float), cuda_stream);
+        if (err != cudaSuccess) {
+            return TITAN_ERROR_CUDA;
+        }
+    }
+
+    dim3 block(16, 16);
+    dim3 grid(
+        static_cast<unsigned int>((seq_len + block.x - 1) / block.x),
+        static_cast<unsigned int>((channels + block.y - 1) / block.y),
+        static_cast<unsigned int>(batch_size)
+    );
+
+    short_conv_backward_kernel<<<grid, block, 0, cuda_stream>>>(
+        grad_output, input, weights, grad_input, grad_weights, grad_bias,
+        seq_len, channels, window_size
+    );
+
+    return (cudaGetLastError() == cudaSuccess) ? TITAN_SUCCESS : TITAN_ERROR_KERNEL_LAUNCH;
+}

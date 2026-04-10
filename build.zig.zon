@@ -1,0 +1,15 @@
+.{
+    .name = "efla-trainer",
+    .version = "0.1.0",
+    .minimum_zig_version = "0.13.0",
+    .dependencies = .{},
+    .paths = .{
+        "src",
+        "kernels",
+        "configs",
+        "scripts",
+        "cloud",
+        "tests",
+        "docs",
+    },
+}
