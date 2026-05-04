@@ -10,9 +10,14 @@ comptime {
     _ = kernels;
 }
 
+fn zeroSlice(s: []f32) void {
+    for (s) |*v| v.* = 0.0;
+}
+
 fn storeGrad(param: *Tensor, allocator: std.mem.Allocator, grad: *Tensor) !void {
+    const new_grad = try grad.to(allocator, param.device, param.device_id);
     if (param.grad) |existing| existing.deinit();
-    param.grad = try grad.to(allocator, param.device, param.device_id);
+    param.grad = new_grad;
 }
 
 fn cloneTensorToCpu(allocator: std.mem.Allocator, tensor: *Tensor) !*Tensor {
@@ -153,8 +158,9 @@ pub const EflaLayer = struct {
         var beta_param: ?*Tensor = null;
         if (config.learned_beta) {
             const beta_shape = Shape.init(&[_]usize{1});
-            beta_param = try Tensor.full(allocator, beta_shape, .fp32, device, device_id, config.initial_beta);
-            errdefer if (beta_param) |bp| bp.deinit();
+            const bp = try Tensor.full(allocator, beta_shape, .f32, device, device_id, config.initial_beta);
+            errdefer bp.deinit();
+            beta_param = bp;
         }
         self.* = .{
             .config = config,
@@ -182,7 +188,7 @@ pub const EflaLayer = struct {
 
     fn betaValue(self: *EflaLayer) !f32 {
         if (self.beta_param) |bp| {
-            if (bp.dtype != .fp32) return error.DTypeMismatch;
+            if (bp.dtype != .f32) return error.DTypeMismatch;
             const beta_ptr = bp.typedPtr(f32) orelse return error.InvalidDType;
             return beta_ptr[0];
         }
@@ -385,9 +391,9 @@ pub const EflaLayer = struct {
         const output_heads = try self.eflaForwardCpu(k, v, state_forward);
         defer output_heads.deinit();
         const grad_pre_o = try Tensor.zeros(self.allocator, output_heads.shape, .bf16, self.device, self.device_id);
-        errdefer grad_pre_o.deinit();
+        defer grad_pre_o.deinit();
         var grad_w_o = try Tensor.zeros(self.allocator, self.w_o.shape, .bf16, self.device, self.device_id);
-        errdefer grad_w_o.deinit();
+        defer grad_w_o.deinit();
         const grad_output_ptr = grad_output.typedPtr(dtype_mod.BF16) orelse return error.InvalidDType;
         const output_heads_ptr = output_heads.typedPtr(dtype_mod.BF16) orelse return error.InvalidDType;
         const w_o_ptr = self.w_o.typedPtr(dtype_mod.BF16) orelse return error.InvalidDType;
@@ -453,9 +459,9 @@ pub const EflaLayer = struct {
             }
         }
         var grad_k_flat = try Tensor.zeros(self.allocator, k_flat.shape, .bf16, self.device, self.device_id);
-        errdefer grad_k_flat.deinit();
+        defer grad_k_flat.deinit();
         var grad_v_flat = try Tensor.zeros(self.allocator, v_flat.shape, .bf16, self.device, self.device_id);
-        errdefer grad_v_flat.deinit();
+        defer grad_v_flat.deinit();
         var grad_state = try EflaState.initWithBatch(self.allocator, batch_size, self.num_heads, self.head_dim, self.head_dim, self.device, self.device_id);
         errdefer grad_state.deinit();
         const grad_pre_o_head_ptr = grad_pre_o.typedPtr(dtype_mod.BF16) orelse return error.InvalidDType;
@@ -490,11 +496,10 @@ pub const EflaLayer = struct {
         var grad_y_vec = try self.allocator.alloc(f32, self.head_dim);
         defer self.allocator.free(grad_y_vec);
         var grad_beta_total: f32 = 0.0;
-        zeroSlice(grad_state_after);
         var grad_w_k = try Tensor.zeros(self.allocator, self.w_k.shape, .bf16, self.device, self.device_id);
-        errdefer grad_w_k.deinit();
+        defer grad_w_k.deinit();
         var grad_w_v = try Tensor.zeros(self.allocator, self.w_v.shape, .bf16, self.device, self.device_id);
-        errdefer grad_w_v.deinit();
+        defer grad_w_v.deinit();
         const grad_w_k_ptr = grad_w_k.typedPtr(dtype_mod.BF16) orelse return error.InvalidDType;
         const grad_w_v_ptr = grad_w_v.typedPtr(dtype_mod.BF16) orelse return error.InvalidDType;
         for (0..grad_w_k.shape.numel()) |i| {
@@ -533,6 +538,8 @@ pub const EflaLayer = struct {
                     const grad_state_before_head = grad_state_before[h * state_matrix_size ..][0..state_matrix_size];
                     for (0..state_matrix_size) |idx| grad_state_before_head[idx] = grad_state_after_head[idx];
                     zeroSlice(grad_k_vec);
+                    zeroSlice(grad_v_vec);
+                    var grad_c: f32 = 0.0;
                     for (0..self.head_dim) |i| {
                         var sum: f32 = 0.0;
                         for (0..self.head_dim) |j| sum += s_new[i * self.head_dim + j] * grad_y_vec[j];
@@ -547,8 +554,6 @@ pub const EflaLayer = struct {
                         for (0..self.head_dim) |i| sum += grad_state_before_head[i * self.head_dim + j] * k_ptr[head_offset + i].toFloat32();
                         tmp_vec[j] = sum;
                     }
-                    zeroSlice(grad_v_vec);
-                    var grad_c: f32 = 0.0;
                     for (0..self.head_dim) |i| {
                         var sum_gq: f32 = 0.0;
                         for (0..self.head_dim) |j| sum_gq += grad_state_before_head[i * self.head_dim + j] * q_vec[j];
@@ -617,7 +622,7 @@ pub const EflaLayer = struct {
         try storeGrad(self.w_o, self.allocator, grad_w_o);
         if (self.beta_param) |beta_param| {
             var beta_grad = try Tensor.zeros(self.allocator, beta_param.shape, beta_param.dtype, self.device, self.device_id);
-            errdefer beta_grad.deinit();
+            defer beta_grad.deinit();
             const beta_grad_ptr = beta_grad.typedPtr(f32) orelse return error.InvalidDType;
             beta_grad_ptr[0] = grad_beta_total;
             try storeGrad(beta_param, self.allocator, beta_grad);
@@ -694,8 +699,7 @@ pub const ChunkedScan = struct {
         return .{ .start = start, .end = end };
     }
 
-    pub fn prefixScan(self: ChunkedScan, chunk_states: []*EflaState, allocator: std.mem.Allocator) !void {
-        _ = allocator;
+    pub fn prefixScan(self: ChunkedScan, chunk_states: []*EflaState) !void {
         if (chunk_states.len != self.num_chunks) return error.InvalidChunkCount;
         if (chunk_states.len <= 1) return;
         for (1..chunk_states.len) |idx| {
