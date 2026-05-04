@@ -435,8 +435,8 @@ pub const EflaModel = struct {
             for (prism_states_out) |state| if (state) |s| s.deinit();
         }
         for (self.blocks, 0..) |block, i| {
-            const efla_state = if (efla_states_in) |states| if (i < states.len) states[i] else null else null;
-            const prism_state = if (prism_states_in) |states| if (i < states.len) states[i] else null else null;
+            const efla_state = if (efla_states_in) |states| (if (i < states.len) states[i] else null) else null;
+            const prism_state = if (prism_states_in) |states| (if (i < states.len) states[i] else null) else null;
             const result = try block.forward(hidden, efla_state, prism_state);
             hidden.deinit();
             hidden = result.output;
@@ -486,79 +486,79 @@ pub const EflaModel = struct {
     }
 
     pub fn collectParameters(self: *Self, allocator: std.mem.Allocator) ![]*Tensor {
-        var params = std.ArrayList(*Tensor).init(allocator);
-        errdefer params.deinit();
-        try params.append(self.embed_tokens.weight);
+        var params: std.ArrayList(*Tensor) = .empty;
+        errdefer params.deinit(allocator);
+        try params.append(allocator, self.embed_tokens.weight);
         for (self.blocks) |block| {
-            try params.append(block.ln1.weight);
-            try params.append(block.efla.w_k);
-            try params.append(block.efla.w_v);
-            try params.append(block.efla.w_o);
-            if (block.efla.beta_param) |beta_param| try params.append(beta_param);
-            for (block.prism.w_beta) |w| try params.append(w);
-            for (block.prism.w_k) |w| try params.append(w);
-            for (block.prism.w_p) |w| try params.append(w);
-            try params.append(block.prism.shortconv.weight);
-            if (block.prism.shortconv.bias) |bias| try params.append(bias);
-            try params.append(block.ln2.weight);
-            try params.append(block.mlp_up.weight);
-            try params.append(block.mlp_down.weight);
+            try params.append(allocator, block.ln1.weight);
+            try params.append(allocator, block.efla.w_k);
+            try params.append(allocator, block.efla.w_v);
+            try params.append(allocator, block.efla.w_o);
+            if (block.efla.beta_param) |beta_param| try params.append(allocator, beta_param);
+            for (block.prism.w_beta) |w| try params.append(allocator, w);
+            for (block.prism.w_k) |w| try params.append(allocator, w);
+            for (block.prism.w_p) |w| try params.append(allocator, w);
+            try params.append(allocator, block.prism.shortconv.weight);
+            if (block.prism.shortconv.bias) |bias| try params.append(allocator, bias);
+            try params.append(allocator, block.ln2.weight);
+            try params.append(allocator, block.mlp_up.weight);
+            try params.append(allocator, block.mlp_down.weight);
         }
-        try params.append(self.final_norm.weight);
-        if (self.lm_head) |head| try params.append(head.weight);
-        return params.toOwnedSlice();
+        try params.append(allocator, self.final_norm.weight);
+        if (self.lm_head) |head| try params.append(allocator, head.weight);
+        return params.toOwnedSlice(allocator);
     }
 
     pub fn getParameterNames(self: *Self, allocator: std.mem.Allocator) ![]const []const u8 {
-        var names = std.ArrayList([]const u8).init(allocator);
+        var names: std.ArrayList([]const u8) = .empty;
         errdefer {
             for (names.items) |name| allocator.free(name);
-            names.deinit();
+            names.deinit(allocator);
         }
-        try names.append(try allocator.dupe(u8, "embed_tokens.weight"));
+        try names.append(allocator, try allocator.dupe(u8, "embed_tokens.weight"));
         for (self.blocks, 0..) |block, i| {
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.ln1.weight", .{i}));
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.efla.w_k", .{i}));
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.efla.w_v", .{i}));
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.efla.w_o", .{i}));
-            if (block.efla.beta_param != null) try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.efla.beta_param", .{i}));
-            for (0..block.prism.w_beta.len) |j| try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.prism.w_beta.{d}", .{ i, j }));
-            for (0..block.prism.w_k.len) |j| try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.prism.w_k.{d}", .{ i, j }));
-            for (0..block.prism.w_p.len) |j| try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.prism.w_p.{d}", .{ i, j }));
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.prism.shortconv.weight", .{i}));
-            if (block.prism.shortconv.bias != null) try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.prism.shortconv.bias", .{i}));
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.ln2.weight", .{i}));
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.mlp_up.weight", .{i}));
-            try names.append(try std.fmt.allocPrint(allocator, "blocks.{d}.mlp_down.weight", .{i}));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.ln1.weight", .{i}));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.efla.w_k", .{i}));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.efla.w_v", .{i}));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.efla.w_o", .{i}));
+            if (block.efla.beta_param != null) try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.efla.beta_param", .{i}));
+            for (0..block.prism.w_beta.len) |j| try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.prism.w_beta.{d}", .{ i, j }));
+            for (0..block.prism.w_k.len) |j| try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.prism.w_k.{d}", .{ i, j }));
+            for (0..block.prism.w_p.len) |j| try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.prism.w_p.{d}", .{ i, j }));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.prism.shortconv.weight", .{i}));
+            if (block.prism.shortconv.bias != null) try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.prism.shortconv.bias", .{i}));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.ln2.weight", .{i}));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.mlp_up.weight", .{i}));
+            try names.append(allocator, try std.fmt.allocPrint(allocator, "blocks.{d}.mlp_down.weight", .{i}));
         }
-        try names.append(try allocator.dupe(u8, "final_norm.weight"));
-        if (self.lm_head != null) try names.append(try allocator.dupe(u8, "lm_head.weight"));
-        return names.toOwnedSlice();
+        try names.append(allocator, try allocator.dupe(u8, "final_norm.weight"));
+        if (self.lm_head != null) try names.append(allocator, try allocator.dupe(u8, "lm_head.weight"));
+        return names.toOwnedSlice(allocator);
     }
 
     pub fn collectGradients(self: *Self, allocator: std.mem.Allocator) ![]*Tensor {
-        var grads = std.ArrayList(*Tensor).init(allocator);
-        errdefer grads.deinit();
+        var grads: std.ArrayList(*Tensor) = .empty;
+        errdefer grads.deinit(allocator);
         const embed_grad = self.embed_tokens.weight.grad orelse return ModelError.GradientNotAvailable;
-        try grads.append(embed_grad);
+        try grads.append(allocator, embed_grad);
         for (self.blocks) |block| {
-            try grads.append(block.ln1.weight.grad orelse return ModelError.GradientNotAvailable);
-            try grads.append(block.efla.w_k.grad orelse return ModelError.GradientNotAvailable);
-            try grads.append(block.efla.w_v.grad orelse return ModelError.GradientNotAvailable);
-            try grads.append(block.efla.w_o.grad orelse return ModelError.GradientNotAvailable);
-            if (block.efla.beta_param) |beta_param| try grads.append(beta_param.grad orelse return ModelError.GradientNotAvailable);
-            for (block.prism.w_beta) |w| try grads.append(w.grad orelse return ModelError.GradientNotAvailable);
-            for (block.prism.w_k) |w| try grads.append(w.grad orelse return ModelError.GradientNotAvailable);
-            for (block.prism.w_p) |w| try grads.append(w.grad orelse return ModelError.GradientNotAvailable);
-            try grads.append(block.prism.shortconv.weight.grad orelse return ModelError.GradientNotAvailable);
-            if (block.prism.shortconv.bias) |bias| try grads.append(bias.grad orelse return ModelError.GradientNotAvailable);
-            try grads.append(block.ln2.weight.grad orelse return ModelError.GradientNotAvailable);
-            try grads.append(block.mlp_up.weight.grad orelse return ModelError.GradientNotAvailable);
-            try grads.append(block.mlp_down.weight.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.ln1.weight.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.efla.w_k.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.efla.w_v.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.efla.w_o.grad orelse return ModelError.GradientNotAvailable);
+            if (block.efla.beta_param) |beta_param| try grads.append(allocator, beta_param.grad orelse return ModelError.GradientNotAvailable);
+            for (block.prism.w_beta) |w| try grads.append(allocator, w.grad orelse return ModelError.GradientNotAvailable);
+            for (block.prism.w_k) |w| try grads.append(allocator, w.grad orelse return ModelError.GradientNotAvailable);
+            for (block.prism.w_p) |w| try grads.append(allocator, w.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.prism.shortconv.weight.grad orelse return ModelError.GradientNotAvailable);
+            if (block.prism.shortconv.bias) |bias| try grads.append(allocator, bias.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.ln2.weight.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.mlp_up.weight.grad orelse return ModelError.GradientNotAvailable);
+            try grads.append(allocator, block.mlp_down.weight.grad orelse return ModelError.GradientNotAvailable);
         }
-        try grads.append(self.final_norm.weight.grad orelse return ModelError.GradientNotAvailable);
-        if (self.lm_head) |head| try grads.append(head.weight.grad orelse return ModelError.GradientNotAvailable);
-        return grads.toOwnedSlice();
+        try grads.append(allocator, self.final_norm.weight.grad orelse return ModelError.GradientNotAvailable);
+        if (self.lm_head) |head| try grads.append(allocator, head.weight.grad orelse return ModelError.GradientNotAvailable);
+        return grads.toOwnedSlice(allocator);
     }
 
     pub fn countParameters(self: *Self) u64 {
@@ -759,7 +759,7 @@ fn tensorNumel(tensor: *Tensor) u64 {
 }
 
 test "EflaModel parameter count matches collected parameters and names" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
     defer {
         const status = gpa.deinit();
         std.testing.expect(status == .ok) catch unreachable;
